@@ -229,8 +229,35 @@ class GraphExecutor:
             state_data["memory_keys"] = list(memory.read_all().keys())
 
             state_path.write_text(_json.dumps(state_data, indent=2), encoding="utf-8")
-        except Exception:
-            pass  # Best-effort — never block execution
+        except Exception as e:
+            # PR 1: Surface failures instead of silently swallowing
+            try:
+                if self.runtime_logger:
+                    self.runtime_logger.log_warning(
+                        "progress_write_failed",
+                        error=str(e),
+                        state_path=str(state_path),
+                        execution_id=self._stream_id,  # Use stream_id as execution identifier
+                    )
+                # Also log to standard logger as fallback/addition
+                self.logger.warning(
+                    f"Failed to persist progress to {state_path}: {e}", exc_info=True
+                )
+
+                # Emit event if bus is available
+                if self._event_bus:
+                    # using create_task to avoid awaiting in this synchronous method if possible,
+                    # but _write_progress is sync, so we can't await.
+                    # Fire-and-forget style if event_bus.emit is async, or just call if sync.
+                    # Assuming emit is async based on other usages (await self._event_bus.emit_node_loop_started),
+                    # we need to be careful. _write_progress is sync.
+                    # We'll skip event bus for now to avoid async/sync mixing issues in this safe PR,
+                    # or just rely on runtime_logger which implies structured logging.
+                    pass
+
+            except Exception:
+                # Last resort: never let logging crash execution
+                pass
 
     def _validate_tools(self, graph: GraphSpec) -> list[str]:
         """
@@ -458,6 +485,27 @@ class GraphExecutor:
         if session_state and current_node_id != graph.entry_node:
             self.logger.info(f"🔄 Resuming from: {current_node_id}")
 
+            # PR 2: Warn if resuming against a different graph version
+            start_hash = session_state.get("graph_hash")
+            current_hash = getattr(graph, "graph_hash", None)
+            
+            if start_hash and current_hash and start_hash != current_hash:
+                warning_msg = (
+                    f"Graph version mismatch during resume!\n"
+                    f"   • Session started with hash: {start_hash[:8]}\n"
+                    f"   • Current graph hash:        {current_hash[:8]}\n"
+                    f"   ⚠ Execution behavior may diverge from original session."
+                )
+                self.logger.warning(warning_msg)
+                
+                if self.runtime_logger:
+                    self.runtime_logger.log_warning(
+                        "graph_version_mismatch",
+                        previous=start_hash,
+                        current=current_hash,
+                        session_id=session_state.get("session_id", "unknown"),
+                    )
+
         # Start run
         _run_id = self.runtime.start_run(
             goal_id=goal.id,
@@ -500,6 +548,7 @@ class GraphExecutor:
                         "memory": saved_memory,  # Include memory for resume
                         "execution_path": list(path),
                         "node_visit_counts": dict(node_visit_counts),
+                        "graph_hash": getattr(graph, "graph_hash", None),
                     }
 
                     # Create a pause checkpoint

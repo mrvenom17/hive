@@ -124,8 +124,17 @@ def load_agent_export(data: str | dict) -> tuple[GraphSpec, Goal]:
     Returns:
         Tuple of (GraphSpec, Goal)
     """
+    import hashlib
+
+    # Compute hash of the raw export data for versioning
     if isinstance(data, str):
+        raw_data = data
         data = json.loads(data)
+    else:
+        # Canonical JSON representation for consistent hashing
+        raw_data = json.dumps(data, sort_keys=True)
+    
+    graph_hash = hashlib.sha256(raw_data.encode("utf-8")).hexdigest()
 
     # Extract graph and goal
     graph_data = data.get("graph", {})
@@ -189,6 +198,7 @@ def load_agent_export(data: str | dict) -> tuple[GraphSpec, Goal]:
         max_steps=graph_data.get("max_steps", 100),
         max_retries_per_node=graph_data.get("max_retries_per_node", 3),
         description=graph_data.get("description", ""),
+        graph_hash=graph_hash,
     )
 
     # Build Goal

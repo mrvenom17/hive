@@ -141,6 +141,9 @@ class SessionState(BaseModel):
     checkpoint_enabled: bool = False
     latest_checkpoint_id: str | None = None
 
+    # Validation
+    graph_hash: str | None = None  # SHA256 of the graph used for this session
+
     model_config = {"extra": "allow"}
 
     @computed_field

@@ -457,6 +457,9 @@ class GraphSpec(BaseModel):
     # Metadata
     description: str = ""
     created_by: str = ""  # "human" or "builder_agent"
+    
+    # Validation/Versioning
+    graph_hash: str | None = None  # SHA256 hash of the graph definition
 
     model_config = {"extra": "allow"}
 
